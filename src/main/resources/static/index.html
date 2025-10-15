@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>附近公司 Demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    #app { display: flex; height: 100vh; }
+    #sidebar { width: 360px; border-right: 1px solid #eee; padding: 12px; box-sizing: border-box; overflow: auto; }
+    #map { flex: 1; }
+    .item { padding: 8px 6px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+    .item:hover { background: #fafafa; }
+    label { display: block; margin: 8px 0 4px; font-size: 13px; color: #444; }
+    input, button { width: 100%; padding: 8px; box-sizing: border-box; }
+    .controls { margin-bottom: 12px; }
+    .radius { margin-top: 6px; }
+    #detailPanel { position: absolute; right: 16px; bottom: 16px; background: #fff; border: 1px solid #eee; box-shadow: 0 6px 16px rgba(0,0,0,0.08); width: 360px; max-height: 50vh; overflow: auto; padding: 12px; display: none; }
+    #detailPanel h4 { margin: 0 0 8px 0; }
+    #detailClose { position: absolute; right: 8px; top: 8px; border: none; background: transparent; cursor: pointer; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="sidebar">
+      <h3>附近公司 Demo</h3>
+      <div class="controls">
+        <label>数据源</label>
+        <select id="source">
+          <option value="amap" selected>高德（推荐国内）</option>
+          <option value="osm">OpenStreetMap（兜底）</option>
+        </select>
+        <label>关键词（可选）</label>
+        <input id="keyword" placeholder="如：互联网、软件、科技" />
+        <label>半径（米）</label>
+        <input id="radius" type="number" min="200" max="5000" step="100" value="1500" class="radius" />
+        <button id="searchBtn">搜索</button>
+      </div>
+      <div id="list"></div>
+    </div>
+    <div id="map"></div>
+  </div>
+  <div id="detailPanel">
+    <button id="detailClose">✕</button>
+    <h4>工商详情</h4>
+    <div id="detailContent">暂无数据</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map');
+    const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    let centerMarker = null;
+    let radiusCircle = null;
+    let markers = [];
+
+    function clearMarkers() {
+      markers.forEach(m => m.remove());
+      markers = [];
+      if (radiusCircle) { radiusCircle.remove(); radiusCircle = null; }
+    }
+
+    function setCenter(lat, lng, radius) {
+      if (centerMarker) centerMarker.remove();
+      centerMarker = L.marker([lat, lng]).addTo(map).bindPopup('检索中心');
+      map.setView([lat, lng], 15);
+      radiusCircle = L.circle([lat, lng], { radius, color: '#2a7', fillColor: '#2a7', fillOpacity: 0.05 }).addTo(map);
+    }
+
+    async function search(lat, lng, radius, keyword) {
+      clearMarkers();
+      setCenter(lat, lng, radius);
+      const source = document.getElementById('source').value;
+      const url = `/api/companies/nearby?lat=${lat}&lng=${lng}&radius=${radius}&source=${source}` + (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
+      const res = await fetch(url);
+      const data = await res.json();
+      const listEl = document.getElementById('list');
+      listEl.innerHTML = '';
+      (data.items || []).forEach(item => {
+        const m = L.marker([item.lat, item.lng]).addTo(map).bindPopup(`<b>${item.name}</b><br/>${item.address || ''}<br/>距离：${Math.round(item.distance)} 米`);
+        markers.push(m);
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.innerHTML = `<div><b>${item.name}</b></div><div style="font-size:12px;color:#666;">${item.address || ''}</div><div style="font-size:12px;color:#666;">${Math.round(item.distance)} 米</div><div style="margin-top:6px;display:flex;gap:8px;"><button class="detailBtn">工商详情</button><button class="jobsBtn">投递链接</button></div>`;
+        div.onclick = () => { map.setView([item.lat, item.lng], 17); m.openPopup(); };
+        div.querySelector('.detailBtn').onclick = async (ev) => {
+          ev.stopPropagation();
+          const detailPanel = document.getElementById('detailPanel');
+          const detailContent = document.getElementById('detailContent');
+          detailContent.innerHTML = '加载中...';
+          detailPanel.style.display = 'block';
+          try {
+            const resp = await fetch(`/api/companies/enrich?name=${encodeURIComponent(item.name)}&address=${encodeURIComponent(item.address || '')}`);
+            if (resp.status === 204) {
+              detailContent.innerHTML = '未配置企查查或未查询到详情';
+              return;
+            }
+            const d = await resp.json();
+            detailContent.innerHTML = `
+              <div><b>${d.name || item.name}</b></div>
+              <div>统一社会信用代码：${d.unifiedSocialCreditCode || '-'}</div>
+              <div>法定代表人：${d.legalPerson || '-'}</div>
+              <div>注册资本：${d.registeredCapital || '-'}</div>
+              <div>成立日期：${d.establishmentDate || '-'}</div>
+              <div>注册地址：${d.address || item.address || '-'}</div>
+              <div>经营范围：${d.businessScope || '-'}</div>
+              <div>电话：${d.phone || '-'}</div>
+              <div>邮箱：${d.email || '-'}</div>
+              <div>官网：${d.website || '-'}</div>
+              <div style="margin-top:6px;font-size:12px;color:#999;">来源：${d.source || 'qcc'}</div>
+            `;
+          } catch (e) {
+            detailContent.innerHTML = '查询失败，请稍后再试';
+          }
+        };
+        div.querySelector('.jobsBtn').onclick = async (ev) => {
+          ev.stopPropagation();
+          const detailPanel = document.getElementById('detailPanel');
+          const detailContent = document.getElementById('detailContent');
+          detailContent.innerHTML = '加载投递链接中...';
+          detailPanel.style.display = 'block';
+          try {
+            const resp = await fetch(`/api/companies/jobs?name=${encodeURIComponent(item.name)}`);
+            const arr = await resp.json();
+            if (!arr || arr.length === 0) {
+              detailContent.innerHTML = '暂未聚合到投递链接，可稍后再试';
+              return;
+            }
+            detailContent.innerHTML = arr.map(j => `
+              <div style="margin:6px 0;">
+                <a href="${j.url}" target="_blank" rel="noopener noreferrer">${j.title || j.url}</a>
+                <span style="font-size:12px;color:#999;">（来源：${j.source}）</span>
+              </div>
+            `).join('');
+          } catch (e) {
+            detailContent.innerHTML = '加载失败，请稍后再试';
+          }
+        };
+        listEl.appendChild(div);
+      });
+    }
+
+    document.getElementById('searchBtn').onclick = async () => {
+      const radius = parseInt(document.getElementById('radius').value, 10) || 1500;
+      const keyword = document.getElementById('keyword').value.trim();
+      const c = map.getCenter();
+      await search(c.lat, c.lng, radius, keyword);
+    };
+
+    function init() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+          const { latitude, longitude } = pos.coords;
+          map.setView([latitude, longitude], 15);
+          await search(latitude, longitude, 1500, '');
+        }, async () => {
+          // fallback: 上海市中心
+          const lat = 31.2304, lng = 121.4737;
+          map.setView([lat, lng], 13);
+          await search(lat, lng, 1500, '');
+        });
+      } else {
+        const lat = 31.2304, lng = 121.4737;
+        map.setView([lat, lng], 13);
+        search(lat, lng, 1500, '');
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
+    document.getElementById('detailClose').onclick = () => {
+      document.getElementById('detailPanel').style.display = 'none';
+    };
