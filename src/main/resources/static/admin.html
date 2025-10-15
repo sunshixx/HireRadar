@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HireRadar 管理端（审核与批量导入）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 16px; }
+    h2 { margin: 0 0 12px 0; }
+    .row { margin-bottom: 16px; }
+    input, select, button, textarea { padding: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #eee; padding: 8px; text-align: left; }
+    .actions { display: flex; gap: 8px; }
+    .pending { background: #fff8e1; }
+  </style>
+</head>
+<body>
+  <h2>链接审核</h2>
+  <div class="row">
+    <label>公司名：</label>
+    <input id="company" placeholder="可选"/>
+    <label>状态：</label>
+    <select id="status">
+      <option value="PENDING" selected>PENDING</option>
+      <option value="APPROVED">APPROVED</option>
+      <option value="REJECTED">REJECTED</option>
+      <option value="EXPIRED">EXPIRED</option>
+    </select>
+    <button id="load">加载</button>
+  </div>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>公司</th><th>标题</th><th>URL</th><th>类型</th><th>来源</th><th>状态</th><th>操作</th></tr>
+    </thead>
+    <tbody id="list"></tbody>
+  </table>
+
+  <h2 style="margin-top:24px;">批量导入</h2>
+  <div class="row">
+    <p>CSV 每行：companyName,type(APPLY/ANNOUNCEMENT),title,url,source(optional),remarks(optional)</p>
+    <textarea id="csv" rows="6" style="width:100%;"></textarea>
+    <button id="import">导入提交</button>
+  </div>
+
+  <script>
+    async function loadList() {
+      const company = document.getElementById('company').value.trim();
+      const status = document.getElementById('status').value;
+      const url = `/api/links/moderate?status=${encodeURIComponent(status)}` + (company ? `&company=${encodeURIComponent(company)}` : '');
+      const resp = await fetch(url);
+      const arr = await resp.json();
+      const tbody = document.getElementById('list');
+      tbody.innerHTML = '';
+      arr.forEach(l => {
+        const tr = document.createElement('tr');
+        if (l.status === 'PENDING') tr.className = 'pending';
+        tr.innerHTML = `
+          <td>${l.id}</td>
+          <td>${l.companyName}</td>
+          <td>${l.title || ''}</td>
+          <td><a href="${l.url}" target="_blank" rel="noopener noreferrer">${l.url}</a></td>
+          <td>${l.type}</td>
+          <td>${l.source || ''}</td>
+          <td>${l.status}</td>
+          <td class="actions">
+            <button data-id="${l.id}" data-act="approve">通过</button>
+            <button data-id="${l.id}" data-act="reject">拒绝</button>
+          </td>
+        `;
+        tr.querySelectorAll('button').forEach(btn => {
+          btn.onclick = async () => {
+            const id = btn.getAttribute('data-id');
+            const act = btn.getAttribute('data-act');
+            await fetch(`/api/links/moderate/${id}?action=${act}`, { method: 'PUT' });
+            await loadList();
+          };
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('load').onclick = loadList;
+    document.getElementById('import').onclick = async () => {
+      const text = document.getElementById('csv').value.trim();
+      if (!text) return;
+      const lines = text.split(/\r?\n/).filter(s => s.trim());
+      for (const line of lines) {
+        const parts = line.split(',').map(s => s.trim());
+        const [companyName, type, title, url, source, remarks] = parts;
+        const body = { companyName, type, title, url, source: source || 'user', remarks: remarks || '' };
+        await fetch('/api/links/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      }
+      alert('导入完成，请前往审核');
+      document.getElementById('csv').value = '';
+      await loadList();
+    };
+
+    loadList();
+  </script>
+</body>
+</html>
