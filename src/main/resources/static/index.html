@@ -86,7 +86,7 @@
         markers.push(m);
         const div = document.createElement('div');
         div.className = 'item';
-        div.innerHTML = `<div><b>${item.name}</b></div><div style="font-size:12px;color:#666;">${item.address || ''}</div><div style="font-size:12px;color:#666;">${Math.round(item.distance)} 米</div><div style="margin-top:6px;display:flex;gap:8px;"><button class="detailBtn">工商详情</button><button class="jobsBtn">投递链接</button></div>`;
+        div.innerHTML = `<div><b>${item.name}</b></div><div style="font-size:12px;color:#666;">${item.address || ''}</div><div style="font-size:12px;color:#666;">${Math.round(item.distance)} 米</div><div style="margin-top:6px;display:flex;gap:8px;"><button class="detailBtn">工商详情</button><button class="jobsBtn">投递链接</button><button class="annBtn">公告链接</button></div>`;
         div.onclick = () => { map.setView([item.lat, item.lng], 17); m.openPopup(); };
         div.querySelector('.detailBtn').onclick = async (ev) => {
           ev.stopPropagation();
@@ -116,6 +116,29 @@
             `;
           } catch (e) {
             detailContent.innerHTML = '查询失败，请稍后再试';
+          }
+        };
+        div.querySelector('.annBtn').onclick = async (ev) => {
+          ev.stopPropagation();
+          const detailPanel = document.getElementById('detailPanel');
+          const detailContent = document.getElementById('detailContent');
+          detailContent.innerHTML = '加载公告链接中...';
+          detailPanel.style.display = 'block';
+          try {
+            const resp = await fetch(`/api/companies/announcements?name=${encodeURIComponent(item.name)}`);
+            const arr = await resp.json();
+            if (!arr || arr.length === 0) {
+              detailContent.innerHTML = '暂未收录公告链接，可稍后再试或提交';
+              return;
+            }
+            detailContent.innerHTML = arr.map(j => `
+              <div style="margin:6px 0;">
+                <a href="${j.url}" target="_blank" rel="noopener noreferrer">${j.title || j.url}</a>
+                <span style="font-size:12px;color:#999;">（来源：${j.source}）</span>
+              </div>
+            `).join('');
+          } catch (e) {
+            detailContent.innerHTML = '加载失败，请稍后再试';
           }
         };
         div.querySelector('.jobsBtn').onclick = async (ev) => {
